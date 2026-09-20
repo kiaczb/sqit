@@ -8,7 +8,7 @@ TEST database as an upstream, and merges TEST changes into LOCAL with a
 three-way, field-level merge – without SQL dumps, triggers, binlog or daemons.
 
 ```bash
-sqit init --tables users,orders --local-db app_local --test-db app_test --test-host test-db
+sqit init --local-db app_local --test-db app_test --test-host test-db
 sqit commit -m "Initial data"
 sqit status
 sqit diff
@@ -23,7 +23,8 @@ See [DESIGN.md](DESIGN.md) for the storage model and merge semantics.
 ## Requirements
 
 * Go 1.25+ (build); MySQL 8.x and 5.7 are tested, the core flow also passes on 5.5 (JSON columns and fractional seconds need 5.7+)
-* every tracked table must have a primary key (composite keys are fine)
+* every tracked table must have a primary key (composite keys are fine);
+  tables without one are skipped with a warning
 * the LOCAL user needs `SELECT/INSERT/UPDATE/DELETE` on the tracked tables;
   the TEST user needs `SELECT`; both need read access to `information_schema`
 
@@ -36,10 +37,26 @@ go build -o sqit ./cmd/sqit
 ## Setup
 
 ```bash
-sqit init --tables users,orders \
+sqit init
+```
+
+asks for the LOCAL and the UPSTREAM/TEST connection (host, port, user,
+database, password), writes the config, stores the passwords in the
+git-ignored `sqit.env` and tries both connections. Everything can also be
+given as flags (then nothing is asked; `--no-input` never prompts, e.g. in
+scripts):
+
+```bash
+sqit init \
   --local-host 127.0.0.1 --local-port 3306 --local-user root --local-db app_local \
   --test-host  test-db   --test-port  3306 --test-user  app  --test-db  app_test
 ```
+
+By default **every table** of the database (with a primary key) is
+versioned. Exclude tables in the generated **`.sqitignore`** (committed, one
+glob pattern per line – `sessions`, `tmp_*`, `*_log`) or personally via
+`SQIT_IGNORE_TABLES=a,b,tmp_*` in `sqit.env`. `--tables users,orders` (or
+`"tables"` in `config.json`) switches to an explicit allow-list instead.
 
 This writes `.sqit/config.json` (no secrets) and a **`sqit.env`** file next
 to it (added to `.gitignore`) where you put the connection secrets:
@@ -64,14 +81,14 @@ everything in it is deterministic JSON. Never commit `sqit.env`.
 
 | command | meaning |
 |---|---|
-| `sqit init [--local-only]` | create `.sqit/`; `--local-only` restricts upstream connections to localhost |
+| `sqit init [--tables a,b] [--local-only]` | create `.sqit/`, `sqit.env`, `.sqitignore`; `--tables` = explicit allow-list instead of "all tables minus `.sqitignore`"; `--local-only` restricts upstream connections to localhost |
 | `sqit status [--fetch] [--json]` | working-tree changes vs HEAD, upstream changes vs HEAD, relation (`CLEAN`, `LOCAL MODIFIED`, `UPSTREAM AHEAD`, `LOCAL AHEAD`, `DIVERGED`, `UNRELATED`, `NO UPSTREAM`) |
 | `sqit diff [--json]` | WORKING TREE vs HEAD, field level |
 | `sqit diff --upstream [--fetch]` | UPSTREAM vs HEAD |
 | `sqit diff --schema [--upstream]` | schema differences |
 | `sqit commit -m "..."` | snapshot LOCAL into a new commit |
 | `sqit fetch` | snapshot TEST as a new upstream commit (only if it changed) |
-| `sqit pull [--dry-run] [--json]` | fetch, three-way merge, apply to LOCAL, record a merge commit or fast-forward |
+| `sqit pull [--dry-run] [--create-missing-tables] [--json]` | fetch, three-way merge, apply to LOCAL, record a merge commit or fast-forward; `--create-missing-tables` creates upstream-only tables on LOCAL first |
 | `sqit table <name> [--upstream] [--json]` | all rows of a table with their status (added / modified / deleted, old -> new per cell) – the data source of the VS Code extension |
 | `sqit log [--upstream]` | history (first-parent walk) |
 | `sqit show [<commit>]` | a commit and its changes vs its parent |
@@ -94,7 +111,11 @@ not contact TEST unless `--fetch` is given. `pull` always fetches.
 * All LOCAL writes run in one transaction that is verified against the
   expected snapshot before commit; on any error nothing changes.
 * Incompatible schemas (different columns, base types, nullability or primary
-  key) abort the pull; `sqit` never runs `ALTER TABLE`.
+  key) abort the pull; `sqit` never runs `ALTER TABLE`. The one exception is
+  a table that exists **only upstream**: its `CREATE TABLE` (from `SHOW CREATE
+  TABLE` on TEST) is printed, and `sqit pull --create-missing-tables` creates
+  it on LOCAL before merging (the LOCAL user needs the `CREATE` privilege).
+  Alternatively list the table in `.sqitignore`.
 
 ## Local development / testing
 
@@ -226,6 +247,8 @@ MySQL:
 go test ./...
 ```
 
+* `sqit init` without `--tables` tracks all seeded tables; `.sqitignore` /
+  `SQIT_IGNORE_TABLES` exclude some (covered by `TestTrackAllTablesWithIgnore`).
 * `SQIT_IT_DSN` (root) drives the general integration tests in
   `internal/core/integration_test.go`; they create and drop throwaway
   `sqit_it_*` databases and check results directly with SQL.

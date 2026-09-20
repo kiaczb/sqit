@@ -97,7 +97,12 @@ func newFlags(name string, env *Env) *flag.FlagSet {
 }
 
 func open(env *Env) (*core.Workspace, error) {
-	return core.Open(env.Dir)
+	w, err := core.Open(env.Dir)
+	if err != nil {
+		return nil, err
+	}
+	w.Warn = func(msg string) { fmt.Fprintln(env.Stderr, "warning:", msg) }
+	return w, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +110,7 @@ func open(env *Env) (*core.Workspace, error) {
 func runInit(ctx context.Context, env *Env, args []string) error {
 	fs := newFlags("init", env)
 	cfg := coreDefaultConfig()
-	tables := fs.String("tables", "", "comma-separated list of tables to track")
+	tables := fs.String("tables", "", "comma-separated list of tables to track (default: every table not listed in .sqitignore)")
 	fs.StringVar(&cfg.Local.Host, "local-host", cfg.Local.Host, "LOCAL MySQL host")
 	fs.IntVar(&cfg.Local.Port, "local-port", cfg.Local.Port, "LOCAL MySQL port")
 	fs.StringVar(&cfg.Local.User, "local-user", cfg.Local.User, "LOCAL MySQL user")
@@ -115,6 +120,8 @@ func runInit(ctx context.Context, env *Env, args []string) error {
 	fs.StringVar(&cfg.Test.User, "test-user", cfg.Test.User, "TEST MySQL user")
 	fs.StringVar(&cfg.Test.Database, "test-db", cfg.Test.Database, "TEST database name")
 	fs.BoolVar(&cfg.LocalOnly, "local-only", false, "refuse TEST/upstream connections that do not target localhost")
+	noInput := fs.Bool("no-input", false, "never prompt; take everything from flags / sqit.env")
+	interactive := fs.Bool("interactive", false, "prompt for connection details even when stdin is not a terminal")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -123,6 +130,21 @@ func runInit(ctx context.Context, env *Env, args []string) error {
 			cfg.Tables = append(cfg.Tables, t)
 		}
 	}
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+
+	// Refuse early instead of leaving a half-configured repository behind.
+	if _, err := os.Stat(filepath.Join(env.Dir, repo.DirName, "config.json")); err == nil {
+		return fmt.Errorf("repository already exists at %s", filepath.Join(env.Dir, repo.DirName))
+	}
+
+	// Ask for what the flags did not provide, when someone is there to answer.
+	var localPw, testPw string
+	dsnGiven := os.Getenv(cfg.Local.DSNEnv) != "" && os.Getenv(cfg.Test.DSNEnv) != ""
+	if !*noInput && !dsnGiven && (cfg.Local.Database == "" || cfg.Test.Database == "") && (*interactive || stdinIsTerminal()) {
+		localPw, testPw = interactiveInit(cfg, env.Stdout, set)
+	}
+
 	r, err := coreInit(env.Dir, cfg)
 	if err != nil {
 		return err
@@ -133,13 +155,32 @@ func runInit(ctx context.Context, env *Env, args []string) error {
 		return err
 	}
 	envPath := filepath.Join(r.Root, repo.EnvFileName)
+	if created && (localPw != "" || testPw != "") {
+		if err := repo.SetEnvFileValues(envPath, map[string]string{cfg.Local.PasswordEnv: localPw, cfg.Test.PasswordEnv: testPw}); err != nil {
+			return err
+		}
+	}
 	if created {
-		fmt.Fprintf(env.Stdout, "Created %s – put the connection passwords (or DSNs) there.\n", envPath)
+		if localPw != "" && testPw != "" {
+			fmt.Fprintf(env.Stdout, "Created %s with the passwords (git-ignored).\n", envPath)
+		} else {
+			fmt.Fprintf(env.Stdout, "Created %s – put the connection passwords (or DSNs) there.\n", envPath)
+		}
 	} else {
 		fmt.Fprintf(env.Stdout, "Keeping existing %s.\n", envPath)
 	}
 	if ignored {
 		fmt.Fprintf(env.Stdout, "Added %s to .gitignore.\n", repo.EnvFileName)
+	}
+	ignorePath := filepath.Join(r.Root, repo.IgnoreFileName)
+	if _, err := os.Stat(ignorePath); err != nil {
+		if err := os.WriteFile(ignorePath, []byte(repo.IgnoreTemplate), 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintf(env.Stdout, "Created %s – list tables that must not be versioned there.\n", ignorePath)
+	}
+	if len(cfg.Tables) == 0 {
+		fmt.Fprintln(env.Stdout, "Tracking every table with a primary key (minus .sqitignore).")
 	}
 	fmt.Fprintf(env.Stdout, "LOCAL:    %s\n", cfg.Local.Describe())
 	fmt.Fprintf(env.Stdout, "UPSTREAM: %s\n", cfg.Test.Describe())
@@ -148,10 +189,23 @@ func runInit(ctx context.Context, env *Env, args []string) error {
 	}
 	localSet := cfg.Local.Database != "" || os.Getenv(cfg.Local.DSNEnv) != ""
 	testSet := cfg.Test.Database != "" || os.Getenv(cfg.Test.DSNEnv) != ""
-	if len(cfg.Tables) == 0 || !localSet || !testSet {
-		fmt.Fprintf(env.Stdout, "Edit %s to set the databases and the tables to track.\n", r.Dir+string(os.PathSeparator)+"config.json")
+	if !localSet || !testSet {
+		fmt.Fprintf(env.Stdout, "Edit %s (or %s) to set the databases.\n", r.Dir+string(os.PathSeparator)+"config.json", repo.EnvFileName)
+		return nil
 	}
+	// Try both connections so a typo shows up now, not at the first commit.
+	if err := repo.LoadEnvFile(envPath); err != nil {
+		return err
+	}
+	fmt.Fprintln(env.Stdout, tryConnect("LOCAL   ", cfg.Local))
+	fmt.Fprintln(env.Stdout, tryConnect("UPSTREAM", cfg.Test))
+	fmt.Fprintln(env.Stdout, "Next: sqit commit -m \"Initial state\"")
 	return nil
+}
+
+func stdinIsTerminal() bool {
+	fi, err := os.Stdin.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
 // parseArgs parses flags that may appear before or after positional

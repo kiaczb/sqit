@@ -12,7 +12,7 @@ GRANT USAGE ON *.* TO 'sqit_local'@'%'    IDENTIFIED BY 'sqit_local_pw';
 GRANT USAGE ON *.* TO 'sqit_upstream'@'%' IDENTIFIED BY 'sqit_upstream_pw';
 REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'sqit_local'@'%';
 REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'sqit_upstream'@'%';
-GRANT SELECT, INSERT, UPDATE, DELETE ON sqit_local.*    TO 'sqit_local'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE ON sqit_local.* TO 'sqit_local'@'%';
 GRANT SELECT                         ON sqit_upstream.* TO 'sqit_upstream'@'%';
 FLUSH PRIVILEGES;
 

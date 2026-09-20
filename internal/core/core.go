@@ -21,6 +21,53 @@ type Workspace struct {
 	Repo *repo.Repository
 	// Now is overridable for tests.
 	Now func() time.Time
+	// Warn receives non-fatal notices (e.g. tables skipped for lack of a
+	// primary key). nil discards them.
+	Warn func(string)
+}
+
+func (w *Workspace) warn(format string, args ...any) {
+	if w.Warn != nil {
+		w.Warn(fmt.Sprintf(format, args...))
+	}
+}
+
+// readState reads the tracked tables through q. With an explicit table list
+// in the config that list is used as is; otherwise every table of the
+// database minus .sqitignore / SQIT_IGNORE_TABLES is tracked and tables
+// without a primary key are skipped with a warning.
+func (w *Workspace) readState(ctx context.Context, q mysql.Querier, which string) (*snapshot.Memory, error) {
+	explicit := len(w.Repo.Config.Tables) > 0
+	var tables []string
+	if explicit {
+		tables = w.Repo.Config.Tables
+	} else {
+		all, err := mysql.ListTables(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		if tables, err = w.Repo.SelectTables(all); err != nil {
+			return nil, err
+		}
+	}
+	state, skipped, err := mysql.ReadState(ctx, q, tables, !explicit)
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range skipped {
+		w.warn("%s: table %s has no primary key and is not versioned (add it to %s to silence this)", which, t, repo.IgnoreFileName)
+	}
+	return state, nil
+}
+
+// TrackedTables lists the tables the working tree currently tracks.
+func (w *Workspace) TrackedTables(ctx context.Context) ([]string, error) {
+	local, err := w.ReadLocal(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	defer local.Close()
+	return local.State.Schema().TableNames(), nil
 }
 
 // Open opens the repository found at or above dir.
@@ -47,9 +94,11 @@ func (l *LocalTx) Close() {
 	}
 	if l.Tx != nil {
 		l.Tx.Rollback()
+		l.Tx = nil
 	}
 	if l.Session != nil {
 		l.Session.Close()
+		l.Session = nil
 	}
 }
 
@@ -69,7 +118,7 @@ func (w *Workspace) ReadLocal(ctx context.Context, readOnly bool) (*LocalTx, err
 		sess.Close()
 		return nil, err
 	}
-	state, err := mysql.ReadState(ctx, tx, w.Repo.Config.Tables)
+	state, err := w.readState(ctx, tx, "local")
 	if err != nil {
 		tx.Rollback()
 		sess.Close()
@@ -99,7 +148,7 @@ func (w *Workspace) ReadTest(ctx context.Context) (*snapshot.Memory, error) {
 		return nil, err
 	}
 	defer tx.Rollback()
-	state, err := mysql.ReadState(ctx, tx, w.Repo.Config.Tables)
+	state, err := w.readState(ctx, tx, "test")
 	if err != nil {
 		return nil, fmt.Errorf("test: %w", err)
 	}

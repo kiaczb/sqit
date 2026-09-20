@@ -96,6 +96,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (pick !== 'Pull') return;
       await runAndRefresh(['pull'], 'sqit: pulled');
     }),
+    vscode.commands.registerCommand('sqit.pullCreateTables', async () => {
+      const pick = await vscode.window.showWarningMessage(
+        'Pull merges the upstream (TEST) snapshot into the LOCAL database and CREATEs tables that exist only upstream. Continue?',
+        { modal: true },
+        'Pull'
+      );
+      if (pick !== 'Pull') return;
+      await runAndRefresh(['pull', '--create-missing-tables'], 'sqit: pulled');
+    }),
     vscode.commands.registerCommand('sqit.status', () => runAndRefresh(['status'], 'sqit: status in output')),
     vscode.commands.registerCommand('sqit.diff', () => sqit.runLogged(['diff'])),
     vscode.commands.registerCommand('sqit.log', () => sqit.runLogged(['log'])),

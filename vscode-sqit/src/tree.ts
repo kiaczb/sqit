@@ -71,7 +71,7 @@ export class TablesProvider implements vscode.TreeDataProvider<Node> {
       if (this.mode === 'upstream' && !cs) {
         return [new Node('info', '', this.mode, 'No upstream snapshot yet – run Fetch')];
       }
-      const tables = this.sqit.tables();
+      const tables = this.status.tables?.length ? this.status.tables : this.sqit.tables();
       const nodes = tables.map((t) => {
         const changes = (cs?.changes ?? []).filter((c) => c.table === t);
         const a = changes.filter((c) => c.kind === 'added').length;

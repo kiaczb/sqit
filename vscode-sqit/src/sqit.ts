@@ -18,6 +18,7 @@ export interface StatusJson {
   base: string;
   relation: string;
   dirty: boolean;
+  tables?: string[]; // tracked tables as resolved by the CLI (all tables minus .sqitignore)
   workingTree: ChangeSet;
   upstreamChanges?: ChangeSet & { aheadBy: number; localAheadBy: number };
 }

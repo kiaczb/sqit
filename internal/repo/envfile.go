@@ -83,6 +83,24 @@ func orDefault(s, d string) string {
 	return s
 }
 
+// SetEnvFileValues fills in KEY= lines of an env file (only keys that are
+// present and empty are touched; empty values are ignored).
+func SetEnvFileValues(path string, values map[string]string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(b), "\n")
+	for i, line := range lines {
+		for k, v := range values {
+			if v != "" && strings.TrimSpace(line) == k+"=" {
+				lines[i] = k + "=" + v
+			}
+		}
+	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600)
+}
+
 // WriteEnvFile creates sqit.env in root if it does not exist yet and makes
 // sure .gitignore excludes it. It reports what it did.
 func WriteEnvFile(root string, cfg *Config) (created bool, gitignored bool, err error) {

@@ -6,7 +6,8 @@ Table view and GitHub-style red/green change highlighting for
 ## What you get
 
 * **SQit activity bar** with two trees:
-  * **Tables** – every tracked table with its uncommitted changes (LOCAL
+  * **Tables** – every tracked table (all tables of the database minus
+    `.sqitignore`, or the explicit list in `.sqit/config.json`) with its uncommitted changes (LOCAL
     database vs HEAD): `+added ~modified -deleted`, expandable to the changed
     records.
   * **Upstream (TEST)** – the same for the last fetched upstream snapshot vs

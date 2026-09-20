@@ -9,7 +9,7 @@ CREATE DATABASE sqit_upstream CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS 'sqit_local_user'@'%'    IDENTIFIED BY 'sqit_local_pw';
 CREATE USER IF NOT EXISTS 'sqit_upstream_user'@'%' IDENTIFIED BY 'sqit_upstream_pw';
 REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'sqit_local_user'@'%', 'sqit_upstream_user'@'%';
-GRANT SELECT, INSERT, UPDATE, DELETE ON sqit_local.*    TO 'sqit_local_user'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE ON sqit_local.* TO 'sqit_local_user'@'%';
 GRANT SELECT                         ON sqit_upstream.* TO 'sqit_upstream_user'@'%';
 FLUSH PRIVILEGES;
 

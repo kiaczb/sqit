@@ -95,8 +95,14 @@ operations. Where it deviates from the original brief it says why.
 }
 ```
 
-Only the listed tables are tracked. Every tracked table must have a primary
-key (composite keys are supported).
+`tables` is optional. When it is empty (the default written by `sqit init`)
+every base table of the database is tracked except those matching a pattern
+in `.sqitignore` (committed, glob per line) or in `SQIT_IGNORE_TABLES`
+(environment / `sqit.env`, comma separated); tables without a primary key
+are skipped with a warning. When `tables` is given it is an explicit
+allow-list and every listed table must exist and have a primary key. The
+table set is resolved per database read, so a table that exists only on one
+side shows up as a schema incompatibility and blocks `pull`.
 
 ---
 

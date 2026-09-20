@@ -823,3 +823,114 @@ func countFiles(t *testing.T, dir string) int {
 	}
 	return n
 }
+
+func TestTrackAllTablesWithIgnore(t *testing.T) {
+	f := newFixture(t, nil, usersDDL,
+		"CREATE TABLE orders (id INT PRIMARY KEY, total DECIMAL(10,2)) ENGINE=InnoDB",
+		"CREATE TABLE sessions (id INT PRIMARY KEY, token VARCHAR(50)) ENGINE=InnoDB",
+		"CREATE TABLE tmp_import (id INT PRIMARY KEY) ENGINE=InnoDB",
+		"CREATE TABLE audit_log (msg VARCHAR(100)) ENGINE=InnoDB") // no primary key
+	seedUsers(f)
+	ctx := context.Background()
+	if err := os.WriteFile(filepath.Join(f.dir, repo.IgnoreFileName), []byte("sessions\ntmp_*\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var warnings []string
+	f.ws.Warn = func(m string) { warnings = append(warnings, m) }
+
+	tables, err := f.ws.TrackedTables(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(tables, ",") != "orders,users" {
+		t.Fatalf("tracked %v", tables)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "audit_log") {
+		t.Fatalf("warnings %v", warnings)
+	}
+	// Personal ignore from the environment (sqit.env) adds to .sqitignore.
+	t.Setenv(repo.IgnoreEnv, "orders")
+	tables, _ = f.ws.TrackedTables(ctx)
+	if strings.Join(tables, ",") != "users" {
+		t.Fatalf("tracked with env ignore %v", tables)
+	}
+	os.Unsetenv(repo.IgnoreEnv)
+
+	// The whole workflow works without an explicit table list.
+	if _, _, err := f.ws.Commit(ctx, "all tables", false); err != nil {
+		t.Fatal(err)
+	}
+	f.exec(f.test, "INSERT INTO orders VALUES (1, 5.00)")
+	f.exec(f.test, "INSERT INTO sessions VALUES (1, 'ignored')")
+	rep, err := f.ws.Pull(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Blocked() || !rep.Applied {
+		t.Fatalf("pull %+v", rep)
+	}
+	if f.count(f.local, "orders") != 1 || f.count(f.local, "sessions") != 0 {
+		t.Fatal("ignored table must not be synchronised, tracked table must")
+	}
+	out, code := f.run("status", "--json")
+	if code != 0 || !strings.Contains(out, `"tables": [`) || strings.Contains(out, `"sessions"`) {
+		t.Fatalf("status --json (%d):\n%s", code, out)
+	}
+}
+
+func TestPullCreatesMissingTables(t *testing.T) {
+	f := newFixture(t, nil, usersDDL)
+	seedUsers(f)
+	ctx := context.Background()
+	if _, err := f.ws.Pull(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	// A new table appears upstream only.
+	f.exec(f.test, "CREATE TABLE newtable (id INT PRIMARY KEY, label VARCHAR(20) NULL) ENGINE=InnoDB")
+	f.exec(f.test, "INSERT INTO newtable VALUES (1, 'one'), (2, NULL)")
+
+	rep, err := f.ws.Pull(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.SchemaIncompatibilities) != 1 || len(rep.MissingTableDDL) != 1 || !strings.Contains(rep.MissingTableDDL[0], "CREATE TABLE `newtable`") {
+		t.Fatalf("dry run: %+v", rep)
+	}
+	out, code := f.run("pull")
+	if code != 1 || !strings.Contains(out, "added table: newtable") || !strings.Contains(out, "sqit pull --create-missing-tables") {
+		t.Fatalf("pull (%d):\n%s", code, out)
+	}
+	// Dry run with the flag still creates nothing.
+	rep, err = f.ws.PullWith(ctx, true, core.PullOptions{CreateMissingTables: true})
+	if err != nil || len(rep.CreatedTables) != 0 {
+		t.Fatalf("dry run created tables: %+v %v", rep.CreatedTables, err)
+	}
+	// Real pull with the flag: table created, rows pulled, merge recorded.
+	rep, err = f.ws.PullWith(ctx, false, core.PullOptions{CreateMissingTables: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Blocked() || !rep.Applied || len(rep.CreatedTables) != 1 {
+		t.Fatalf("pull: %+v", rep)
+	}
+	if f.count(f.local, "newtable") != 2 {
+		t.Fatalf("rows in created table: %d", f.count(f.local, "newtable"))
+	}
+	if got := f.queryString(f.local, "SELECT label FROM newtable WHERE id = 2"); got != "NULL" {
+		t.Fatal(got)
+	}
+	st, _ := f.ws.Status(ctx, false)
+	if st.Dirty() {
+		t.Fatalf("dirty after pull: %+v", st.Working.Changes)
+	}
+	// A column difference in an existing table is still refused, even with the flag.
+	f.exec(f.test, "ALTER TABLE users ADD COLUMN age INT NULL")
+	f.exec(f.test, "CREATE TABLE another (id INT PRIMARY KEY) ENGINE=InnoDB")
+	rep, err = f.ws.PullWith(ctx, false, core.PullOptions{CreateMissingTables: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.SchemaIncompatibilities) != 2 || len(rep.CreatedTables) != 0 || len(rep.MissingTableDDL) != 1 {
+		t.Fatalf("mixed: %+v", rep)
+	}
+}

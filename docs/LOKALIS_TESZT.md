@@ -32,7 +32,24 @@ A script újrafuttatása bármikor visszaállítja a két adatbázist a kezdőá
 
 ```powershell
 mkdir D:/sqit-proba; cd D:/sqit-proba
-sqit init --tables users,orders `
+sqit init
+```
+
+Az `init` végigkérdezi a két kapcsolatot (Enter = alapérték szögletes
+zárójelben). Válaszok ehhez a teszthez:
+
+```text
+LOCAL:    host 127.0.0.1, port 3306, user sqit_local,    database sqit_local,    password sqit_local_pw
+UPSTREAM: host 127.0.0.1, port 3306, user sqit_upstream, database sqit_upstream, password sqit_upstream_pw
+local-only: Y
+```
+
+A végén mindkét kapcsolatot kipróbálja (`LOCAL   : connected ..., 2 table(s)`),
+és a jelszavak már a `sqit.env`-ben vannak. Ugyanez kérdések nélkül, flagekkel
+(akkor a jelszavakat neked kell a `sqit.env`-be írnod):
+
+```powershell
+sqit init `
   --local-user sqit_local    --local-db sqit_local `
   --test-user  sqit_upstream --test-db  sqit_upstream `
   --local-only
@@ -44,14 +61,18 @@ Várt kimenet:
 Initialized empty sqit repository in D:\sqit-proba\.sqit
 Created D:\sqit-proba\sqit.env – put the connection passwords (or DSNs) there.
 Added sqit.env to .gitignore.
+Created D:\sqit-proba\.sqitignore – list tables that must not be versioned there.
+Tracking every table with a primary key (minus .sqitignore).
 LOCAL:    sqit_local@127.0.0.1:3306/sqit_local
 UPSTREAM: sqit_upstream@127.0.0.1:3306/sqit_upstream
 Local-only mode: upstream connections are restricted to localhost.
 ```
 
-Az `init` két fájlt hoz létre: `.sqit/config.json` (host/port/user/db/táblák –
-ezt commitolod) és **`sqit.env`** (jelszavak – gitignore-ban van). Írd bele a
-jelszavakat:
+Az `init` három fájlt hoz létre: `.sqit/config.json` (host/port/user/db –
+ezt commitolod), **`.sqitignore`** (a NEM verziózandó táblák glob mintái, pl.
+`sessions`, `tmp_*` – ezt is commitolod; alapból minden PK-val rendelkező
+tábla követve van) és **`sqit.env`** (jelszavak – gitignore-ban van; itt
+személyes kizárás is adható: `SQIT_IGNORE_TABLES=a,b`). Írd bele a jelszavakat:
 
 ```ini
 SQIT_LOCAL_PASSWORD=sqit_local_pw
@@ -230,3 +251,17 @@ go test ./...
 A `TestLocalEnvironmentWorkflow` a fenti 1–8. lépést játssza le és SQL-ből
 ellenőrzi az eredményt (a végén a két adatbázist újraseedeli). A JSON-típus
 teszt MySQL 5.5-ön automatikusan kimarad.
+
+## 9. Új tábla az upstreamen
+
+```powershell
+q "CREATE TABLE sqit_upstream.tags (id INT PRIMARY KEY, name VARCHAR(50)); INSERT INTO sqit_upstream.tags VALUES (1,'red')"
+sqit pull --dry-run        # ABORTED: added table: tags + kiírja a CREATE TABLE-t
+sqit pull --create-missing-tables
+q "SELECT * FROM sqit_local.tags"                                  # 1 red
+```
+
+A `sqit` meglévő táblát sosem módosít (`ALTER TABLE` nincs); csak a kizárólag
+upstreamen létező táblát hozza létre a TEST definíciójával, és csak ezzel a
+kapcsolóval. Ha nem kell a tábla: írd a `.sqitignore`-ba. (A `sqit_local`
+usernek ehhez `CREATE` jog kell – a seed scriptben már benne van.)

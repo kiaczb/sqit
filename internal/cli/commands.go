@@ -129,6 +129,7 @@ func statusJSON(rep *core.StatusReport) map[string]any {
 		"base":     rep.Base,
 		"relation": rep.Relation,
 		"dirty":    rep.Dirty(),
+		"tables":   rep.WorkingState.Schema().TableNames(),
 		"workingTree": map[string]any{
 			"added": a, "modified": m, "deleted": d,
 			"changes":       rep.Working.Changes,
@@ -284,6 +285,7 @@ func runFetch(ctx context.Context, env *Env, args []string) error {
 func runPull(ctx context.Context, env *Env, args []string) error {
 	fs := newFlags("pull", env)
 	dryRun := fs.Bool("dry-run", false, "show what would happen without touching LOCAL or the refs")
+	createTables := fs.Bool("create-missing-tables", false, "create tables that exist only upstream on LOCAL (CREATE TABLE copied from TEST) before merging")
 	asJSON := fs.Bool("json", false, "machine-readable output")
 	if err := parseArgs(fs, args); err != nil {
 		return err
@@ -292,7 +294,7 @@ func runPull(ctx context.Context, env *Env, args []string) error {
 	if err != nil {
 		return err
 	}
-	rep, err := w.Pull(ctx, *dryRun)
+	rep, err := w.PullWith(ctx, *dryRun, core.PullOptions{CreateMissingTables: *createTables})
 	if err != nil {
 		return err
 	}
@@ -332,10 +334,23 @@ func printPull(out io.Writer, rep *core.PullReport) {
 		fmt.Fprintln(out, "Already up to date.")
 		return
 	}
+	if len(rep.CreatedTables) > 0 {
+		fmt.Fprintf(out, "Created missing table(s) on LOCAL from TEST: %s\n\n", strings.Join(rep.CreatedTables, ", "))
+	}
 	if len(rep.SchemaIncompatibilities) > 0 {
 		fmt.Fprintln(out, "ABORTED: LOCAL and TEST schemas are incompatible; sqit does not alter tables.")
 		for _, c := range rep.SchemaIncompatibilities {
 			fmt.Fprintf(out, "  %s\n", c.String())
+		}
+		if len(rep.MissingTableDDL) > 0 {
+			fmt.Fprintln(out)
+			fmt.Fprintln(out, "Tables that exist only upstream can be created on LOCAL with their TEST definition:")
+			fmt.Fprint(out, ddlIndent(rep.MissingTableDDL))
+			if len(missingOnly(rep)) == len(rep.SchemaIncompatibilities) {
+				fmt.Fprintln(out, "Run:  sqit pull --create-missing-tables   (or add them to .sqitignore)")
+			} else {
+				fmt.Fprintln(out, "Fix the other schema differences by hand (or .sqitignore the tables), then: sqit pull --create-missing-tables")
+			}
 		}
 		return
 	}
@@ -383,6 +398,27 @@ func printPull(out io.Writer, rep *core.PullReport) {
 	}
 }
 
+func ddlIndent(ddl []string) string {
+	var b strings.Builder
+	for _, s := range ddl {
+		for _, line := range strings.Split(s, "\n") {
+			b.WriteString("  " + line + "\n")
+		}
+		b.WriteString("  ;\n")
+	}
+	return b.String()
+}
+
+func missingOnly(rep *core.PullReport) []string {
+	var out []string
+	for _, c := range rep.SchemaIncompatibilities {
+		if c.Kind == schema.TableAdded {
+			out = append(out, c.Table)
+		}
+	}
+	return out
+}
+
 func pullJSON(rep *core.PullReport) map[string]any {
 	out := map[string]any{
 		"dryRun":                  rep.DryRun,
@@ -398,6 +434,8 @@ func pullJSON(rep *core.PullReport) map[string]any {
 		"conflicts":               rep.Conflicts,
 		"conflictSource":          rep.ConflictSource,
 		"schemaIncompatibilities": rep.SchemaIncompatibilities,
+		"missingTableDDL":         rep.MissingTableDDL,
+		"createdTables":           rep.CreatedTables,
 		"stats":                   rep.Stats,
 	}
 	if rep.Plan != nil {

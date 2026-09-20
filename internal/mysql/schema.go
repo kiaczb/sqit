@@ -12,11 +12,57 @@ import (
 
 type canonicalValue = canonical.Value
 
+// ListTables returns the base tables of the connected database, sorted.
+func ListTables(ctx context.Context, q Querier) ([]string, error) {
+	rows, err := q.QueryContext(ctx, `SELECT TABLE_NAME FROM information_schema.TABLES
+		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME`)
+	if err != nil {
+		return nil, fmt.Errorf("listing tables: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out = append(out, name)
+	}
+	return out, rows.Err()
+}
+
+// ShowCreateTable returns the CREATE TABLE statement of a table.
+func ShowCreateTable(ctx context.Context, q Querier, table string) (string, error) {
+	rows, err := q.QueryContext(ctx, "SHOW CREATE TABLE "+Quote(table))
+	if err != nil {
+		return "", fmt.Errorf("SHOW CREATE TABLE %s: %w", table, err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return "", fmt.Errorf("SHOW CREATE TABLE %s returned nothing", table)
+	}
+	cols, _ := rows.Columns()
+	vals := make([]sql.RawBytes, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range vals {
+		ptrs[i] = &vals[i]
+	}
+	if err := rows.Scan(ptrs...); err != nil {
+		return "", err
+	}
+	if len(vals) < 2 {
+		return "", fmt.Errorf("unexpected SHOW CREATE TABLE result for %s", table)
+	}
+	return string(vals[1]), nil
+}
+
 // ReadSchema reads the structure of the given tables from
-// information_schema. Every table must exist and have a primary key.
-func ReadSchema(ctx context.Context, q Querier, tables []string) (*schema.Schema, error) {
+// information_schema. Every table must exist. Tables without a primary key
+// are an error unless skipNoPK is set, in which case they are left out and
+// returned in skipped.
+func ReadSchema(ctx context.Context, q Querier, tables []string, skipNoPK bool) (*schema.Schema, []string, error) {
 	if len(tables) == 0 {
-		return nil, fmt.Errorf("no tables configured (add them to .sqit/config.json \"tables\")")
+		return nil, nil, fmt.Errorf("no tables to track (the database has no tables, or all are ignored)")
 	}
 	placeholders := strings.Repeat("?,", len(tables))
 	placeholders = placeholders[:len(placeholders)-1]
@@ -29,24 +75,24 @@ func ReadSchema(ctx context.Context, q Querier, tables []string) (*schema.Schema
 	rows, err := q.QueryContext(ctx, `SELECT TABLE_NAME FROM information_schema.TABLES
 		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (`+placeholders+`)`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("reading table list: %w", err)
+		return nil, nil, fmt.Errorf("reading table list: %w", err)
 	}
 	present := map[string]bool{}
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
 			rows.Close()
-			return nil, err
+			return nil, nil, err
 		}
 		present[name] = true
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, t := range tables {
 		if !present[t] {
-			return nil, fmt.Errorf("table %q does not exist in the database", t)
+			return nil, nil, fmt.Errorf("table %q does not exist in the database", t)
 		}
 	}
 
@@ -57,7 +103,7 @@ func ReadSchema(ctx context.Context, q Querier, tables []string) (*schema.Schema
 		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (`+placeholders+`)
 		ORDER BY TABLE_NAME, ORDINAL_POSITION`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("reading columns: %w", err)
+		return nil, nil, fmt.Errorf("reading columns: %w", err)
 	}
 	byTable := map[string]*schema.Table{}
 	for rows.Next() {
@@ -68,7 +114,7 @@ func ReadSchema(ctx context.Context, q Querier, tables []string) (*schema.Schema
 		)
 		if err := rows.Scan(&table, &col, &pos, &colType, &dataType, &nullable, &def, &extra, &charset, &collation); err != nil {
 			rows.Close()
-			return nil, err
+			return nil, nil, err
 		}
 		t := byTable[table]
 		if t == nil {
@@ -99,7 +145,7 @@ func ReadSchema(ctx context.Context, q Querier, tables []string) (*schema.Schema
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Primary keys.
@@ -108,13 +154,13 @@ func ReadSchema(ctx context.Context, q Querier, tables []string) (*schema.Schema
 		WHERE TABLE_SCHEMA = DATABASE() AND CONSTRAINT_NAME = 'PRIMARY' AND TABLE_NAME IN (`+placeholders+`)
 		ORDER BY TABLE_NAME, ORDINAL_POSITION`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("reading primary keys: %w", err)
+		return nil, nil, fmt.Errorf("reading primary keys: %w", err)
 	}
 	for rows.Next() {
 		var table, col string
 		if err := rows.Scan(&table, &col); err != nil {
 			rows.Close()
-			return nil, err
+			return nil, nil, err
 		}
 		if t := byTable[table]; t != nil {
 			t.PrimaryKey = append(t.PrimaryKey, col)
@@ -122,20 +168,25 @@ func ReadSchema(ctx context.Context, q Querier, tables []string) (*schema.Schema
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	sch := &schema.Schema{}
+	var skipped []string
 	for _, name := range tables {
 		t := byTable[name]
 		if t == nil {
-			return nil, fmt.Errorf("table %q has no columns", name)
+			return nil, nil, fmt.Errorf("table %q has no columns", name)
 		}
 		if len(t.PrimaryKey) == 0 {
-			return nil, fmt.Errorf("table %q has no primary key; sqit requires one", name)
+			if skipNoPK {
+				skipped = append(skipped, name)
+				continue
+			}
+			return nil, nil, fmt.Errorf("table %q has no primary key; sqit requires one", name)
 		}
 		sch.Tables = append(sch.Tables, *t)
 	}
 	sch.Normalize()
-	return sch, nil
+	return sch, skipped, nil
 }

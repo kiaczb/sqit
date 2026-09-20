@@ -34,6 +34,7 @@
       { "command": "sqit.fetch", "title": "SQit: Fetch upstream (TEST)", "icon": "$(cloud-download)" },
       { "command": "sqit.pullDryRun", "title": "SQit: Pull (dry run)", "icon": "$(eye)" },
       { "command": "sqit.pull", "title": "SQit: Pull upstream into LOCAL", "icon": "$(repo-pull)" },
+      { "command": "sqit.pullCreateTables", "title": "SQit: Pull and create missing tables" },
       { "command": "sqit.status", "title": "SQit: Status", "icon": "$(info)" },
       { "command": "sqit.diff", "title": "SQit: Diff (text)", "icon": "$(diff)" },
       { "command": "sqit.log", "title": "SQit: Log" }
@@ -45,6 +46,7 @@
         { "command": "sqit.pullDryRun", "when": "view == sqit.upstream", "group": "navigation@2" },
         { "command": "sqit.pull", "when": "view == sqit.upstream", "group": "navigation@3" },
         { "command": "sqit.fetch", "when": "view == sqit.upstream", "group": "navigation@4" },
+        { "command": "sqit.pullCreateTables", "when": "view == sqit.upstream", "group": "1_more" },
         { "command": "sqit.diff", "when": "view == sqit.tables", "group": "1_more" },
         { "command": "sqit.status", "when": "view == sqit.tables", "group": "1_more" },
         { "command": "sqit.log", "when": "view == sqit.tables", "group": "1_more" }

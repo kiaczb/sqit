@@ -100,10 +100,13 @@ func (s *Session) Begin(ctx context.Context, readOnly bool) (*sql.Tx, error) {
 
 // ReadState reads the schema and every row of the configured tables through
 // q (normally a transaction) into an in-memory state.
-func ReadState(ctx context.Context, q Querier, tables []string) (*snapshot.Memory, error) {
-	sch, err := ReadSchema(ctx, q, tables)
+//
+// With skipNoPK set, tables without a primary key are left out and their
+// names are returned.
+func ReadState(ctx context.Context, q Querier, tables []string, skipNoPK bool) (*snapshot.Memory, []string, error) {
+	sch, skipped, err := ReadSchema(ctx, q, tables, skipNoPK)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	state := snapshot.NewMemory(sch)
 	for i := range sch.Tables {
@@ -112,10 +115,10 @@ func ReadState(ctx context.Context, q Querier, tables []string) (*snapshot.Memor
 			_, err := state.Add(rec)
 			return err
 		}); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return state, nil
+	return state, skipped, nil
 }
 
 // ReadTable streams every row of a table as canonical records.

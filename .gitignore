@@ -2,3 +2,5 @@
 /sqit.exe
 /.sqit/
 /.env
+# sqit connection secrets
+sqit.env

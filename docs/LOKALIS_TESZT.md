@@ -30,13 +30,8 @@ A script újrafuttatása bármikor visszaállítja a két adatbázist a kezdőá
 
 ## 1. Projekt + `sqit init`  (ez a "git init" élmény)
 
-Jelszó csak környezeti változóból jön, a `.sqit/config.json`-ba nem kerül be:
-
 ```powershell
-mkdir D:\sqit-proba; cd D:\sqit-proba
-$env:SQIT_LOCAL_PASSWORD = 'sqit_local_pw'
-$env:SQIT_TEST_PASSWORD  = 'sqit_upstream_pw'
-
+mkdir D:/sqit-proba; cd D:/sqit-proba
 sqit init --tables users,orders `
   --local-user sqit_local    --local-db sqit_local `
   --test-user  sqit_upstream --test-db  sqit_upstream `
@@ -47,16 +42,36 @@ Várt kimenet:
 
 ```text
 Initialized empty sqit repository in D:\sqit-proba\.sqit
+Created D:\sqit-proba\sqit.env – put the connection passwords (or DSNs) there.
+Added sqit.env to .gitignore.
 LOCAL:    sqit_local@127.0.0.1:3306/sqit_local
 UPSTREAM: sqit_upstream@127.0.0.1:3306/sqit_upstream
 Local-only mode: upstream connections are restricted to localhost.
 ```
 
-(A host/port alapból `127.0.0.1:3306`; más szerverhez `--local-host/--local-port`,
-`--test-host/--test-port`. A `--local-only` miatt nem-localhost upstreamet a
-`sqit` csatlakozás előtt elutasít – amíg a valódi TEST DB-re nem váltasz, hagyd
-bent. Később csak a `test` blokkot / `SQIT_TEST_DSN`-t cseréled, és a
-`localOnly` sort törlöd.)
+Az `init` két fájlt hoz létre: `.sqit/config.json` (host/port/user/db/táblák –
+ezt commitolod) és **`sqit.env`** (jelszavak – gitignore-ban van). Írd bele a
+jelszavakat:
+
+```ini
+SQIT_LOCAL_PASSWORD=sqit_local_pw
+SQIT_TEST_PASSWORD=sqit_upstream_pw
+```
+
+Ezt minden `sqit` parancs automatikusan betölti (a shell env változói
+felülírják). A `--local-only` miatt nem-localhost upstreamet a `sqit`
+csatlakozás előtt elutasít – amíg a valódi TEST DB-re nem váltasz, hagyd bent.
+Később csak a `.sqit/config.json` `test` blokkját (vagy a `sqit.env`-ben a
+`SQIT_TEST_DSN`-t) cseréled, és a `localOnly`/`SQIT_LOCAL_ONLY` sort törlöd.
+
+### VS Code
+
+A `vscode-sqit` extension telepítve van: nyisd meg a `D:/sqit-proba` mappát
+VS Code-ban, a bal oldali *SQit* ikon alatt látod a táblákat a változásokkal;
+egy táblára kattintva táblázatos nézet nyílik (törölt sor piros, új sor zöld,
+módosult cellában a régi érték pirossal áthúzva, az új zölddel). A nézet
+címsorában: Commit, Fetch, Pull (dry run), Pull, Diff, Log. Ha a `sqit` nincs a
+PATH-on, a beállításokban `sqit.executable` = `C:/Users/Bence/go/bin/sqit.exe`.
 
 ## 2. Kezdőállapot commitolása
 

@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"sqit/internal/core"
+	"sqit/internal/repo"
 )
 
 // Command is one sub-command.
@@ -39,6 +41,7 @@ var commands = []*Command{
 	{Name: "commit", Summary: "record the LOCAL database state", Run: runCommit},
 	{Name: "fetch", Summary: "snapshot the TEST database as upstream", Run: runFetch},
 	{Name: "pull", Summary: "fetch and merge TEST into LOCAL (--dry-run)", Run: runPull},
+	{Name: "table", Summary: "show a table's rows with their changes (--upstream, --json)", Run: runTable},
 	{Name: "log", Summary: "show commit history", Run: runLog},
 	{Name: "show", Summary: "show a commit and its changes", Run: runShow},
 	{Name: "inspect", Summary: "print a raw repository object", Run: runInspect},
@@ -125,6 +128,19 @@ func runInit(ctx context.Context, env *Env, args []string) error {
 		return err
 	}
 	fmt.Fprintf(env.Stdout, "Initialized empty sqit repository in %s\n", r.Dir)
+	created, ignored, err := repo.WriteEnvFile(r.Root, cfg)
+	if err != nil {
+		return err
+	}
+	envPath := filepath.Join(r.Root, repo.EnvFileName)
+	if created {
+		fmt.Fprintf(env.Stdout, "Created %s – put the connection passwords (or DSNs) there.\n", envPath)
+	} else {
+		fmt.Fprintf(env.Stdout, "Keeping existing %s.\n", envPath)
+	}
+	if ignored {
+		fmt.Fprintf(env.Stdout, "Added %s to .gitignore.\n", repo.EnvFileName)
+	}
 	fmt.Fprintf(env.Stdout, "LOCAL:    %s\n", cfg.Local.Describe())
 	fmt.Fprintf(env.Stdout, "UPSTREAM: %s\n", cfg.Test.Describe())
 	if cfg.IsLocalOnly() {
@@ -136,4 +152,35 @@ func runInit(ctx context.Context, env *Env, args []string) error {
 		fmt.Fprintf(env.Stdout, "Edit %s to set the databases and the tables to track.\n", r.Dir+string(os.PathSeparator)+"config.json")
 	}
 	return nil
+}
+
+// parseArgs parses flags that may appear before or after positional
+// arguments (Go's flag package stops at the first non-flag otherwise).
+func parseArgs(fs *flag.FlagSet, args []string) error {
+	var flags, positional []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			positional = append(positional, args[i+1:]...)
+			break
+		}
+		if strings.HasPrefix(a, "-") && len(a) > 1 {
+			flags = append(flags, a)
+			// A non-boolean flag given as "-name value" takes the next arg.
+			name := strings.TrimLeft(a, "-")
+			if !strings.Contains(name, "=") {
+				if f := fs.Lookup(name); f != nil {
+					if b, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !b.IsBoolFlag() {
+						if i+1 < len(args) {
+							i++
+							flags = append(flags, args[i])
+						}
+					}
+				}
+			}
+			continue
+		}
+		positional = append(positional, a)
+	}
+	return fs.Parse(append(flags, positional...))
 }

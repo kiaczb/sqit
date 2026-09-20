@@ -41,19 +41,24 @@ sqit init --tables users,orders \
   --test-host  test-db   --test-port  3306 --test-user  app  --test-db  app_test
 ```
 
-This writes `.sqit/config.json` (no secrets). Passwords come from the
-environment:
+This writes `.sqit/config.json` (no secrets) and a **`sqit.env`** file next
+to it (added to `.gitignore`) where you put the connection secrets:
 
-```bash
-export SQIT_LOCAL_PASSWORD=...
-export SQIT_TEST_PASSWORD=...
+```ini
+SQIT_LOCAL_PASSWORD=...
+SQIT_TEST_PASSWORD=...
 # or full DSNs (go-sql-driver format), which override host/port/user/db:
-export SQIT_LOCAL_DSN='root:secret@tcp(127.0.0.1:3306)/app_local'
-export SQIT_TEST_DSN='app:secret@tcp(test-db:3306)/app_test'
+#SQIT_LOCAL_DSN=root:secret@tcp(127.0.0.1:3306)/app_local
+#SQIT_TEST_DSN=app:secret@tcp(test-db:3306)/app_test
+#SQIT_LOCAL_ONLY=1
 ```
 
+Every `sqit` command loads `sqit.env` automatically; variables that are
+already set in the environment take precedence, so CI or a shell profile can
+override the file.
+
 Commit `.sqit/` into your Git repository together with the application code;
-everything in it is deterministic JSON.
+everything in it is deterministic JSON. Never commit `sqit.env`.
 
 ## Commands
 
@@ -67,6 +72,7 @@ everything in it is deterministic JSON.
 | `sqit commit -m "..."` | snapshot LOCAL into a new commit |
 | `sqit fetch` | snapshot TEST as a new upstream commit (only if it changed) |
 | `sqit pull [--dry-run] [--json]` | fetch, three-way merge, apply to LOCAL, record a merge commit or fast-forward |
+| `sqit table <name> [--upstream] [--json]` | all rows of a table with their status (added / modified / deleted, old -> new per cell) – the data source of the VS Code extension |
 | `sqit log [--upstream]` | history (first-parent walk) |
 | `sqit show [<commit>]` | a commit and its changes vs its parent |
 | `sqit inspect <type> <hash>` | dump a raw object |
@@ -249,12 +255,27 @@ The easiest is the Docker environment above; any other server works too:
 SQIT_IT_DSN='root:secret@tcp(127.0.0.1:3306)/' go test ./...
 ```
 
+## VS Code extension
+
+[vscode-sqit/](vscode-sqit/) contains a VS Code extension: an *SQit* activity
+bar with the tracked tables and their changes (LOCAL vs HEAD and UPSTREAM vs
+HEAD), a table grid per table with GitHub-style red/green highlighting of
+deleted / added rows and old -> new cell values, and commands for commit,
+fetch, pull (dry run) and pull. It drives the `sqit` CLI (`status --json`,
+`table --json`), so it needs `sqit` on the `PATH` or the `sqit.executable`
+setting. Build and install:
+
+```bash
+cd vscode-sqit && npm install && npm run compile && npm run package
+code --install-extension sqit-0.1.0.vsix
+```
+
 ## Layout
 
 ```text
 cmd/sqit            CLI entry point
 internal/cli        commands and output
-internal/core       workflows: commit, fetch, status, pull
+internal/core       workflows: commit, fetch, status, pull, table view
 internal/mysql      information_schema reader, row reader, apply + verify
 internal/snapshot   in-memory / repository-backed states
 internal/diff       record + field level diff
@@ -264,4 +285,5 @@ internal/repo       .sqit layout, refs, object store, commit graph
 internal/object     record / manifest / snapshot / commit objects, hashing
 internal/schema     schema model, diff, compatibility
 internal/canonical  canonical JSON, values, primary-key keys
+vscode-sqit/        VS Code extension (TypeScript)
 ```

@@ -51,7 +51,7 @@ func runStatus(ctx context.Context, env *Env, args []string) error {
 	fs := newFlags("status", env)
 	fetch := fs.Bool("fetch", false, "snapshot TEST first")
 	asJSON := fs.Bool("json", false, "machine-readable output")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	w, err := open(env)
@@ -164,7 +164,7 @@ func runDiff(ctx context.Context, env *Env, args []string) error {
 	schemaOnly := fs.Bool("schema", false, "show schema differences")
 	fetch := fs.Bool("fetch", false, "snapshot TEST first (with --upstream)")
 	asJSON := fs.Bool("json", false, "machine-readable output")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	w, err := open(env)
@@ -231,7 +231,7 @@ func runCommit(ctx context.Context, env *Env, args []string) error {
 	fs := newFlags("commit", env)
 	msg := fs.String("m", "", "commit message")
 	allowEmpty := fs.Bool("allow-empty", false, "commit even if nothing changed")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	if strings.TrimSpace(*msg) == "" {
@@ -259,7 +259,7 @@ func runCommit(ctx context.Context, env *Env, args []string) error {
 
 func runFetch(ctx context.Context, env *Env, args []string) error {
 	fs := newFlags("fetch", env)
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	w, err := open(env)
@@ -285,7 +285,7 @@ func runPull(ctx context.Context, env *Env, args []string) error {
 	fs := newFlags("pull", env)
 	dryRun := fs.Bool("dry-run", false, "show what would happen without touching LOCAL or the refs")
 	asJSON := fs.Bool("json", false, "machine-readable output")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	w, err := open(env)
@@ -419,7 +419,7 @@ func runLog(ctx context.Context, env *Env, args []string) error {
 	fs := newFlags("log", env)
 	upstream := fs.Bool("upstream", false, "show the upstream history instead of the local one")
 	limit := fs.Int("n", 50, "maximum number of commits")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	w, err := open(env)
@@ -468,7 +468,7 @@ func printCommit(out io.Writer, h object.Hash, c *object.Commit) {
 
 func runShow(ctx context.Context, env *Env, args []string) error {
 	fs := newFlags("show", env)
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	ref := "HEAD"
@@ -513,7 +513,7 @@ func runShow(ctx context.Context, env *Env, args []string) error {
 
 func runInspect(ctx context.Context, env *Env, args []string) error {
 	fs := newFlags("inspect", env)
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 2 {
@@ -535,4 +535,58 @@ func runInspect(ctx context.Context, env *Env, args []string) error {
 		return err
 	}
 	return writeJSON(env.Stdout, v)
+}
+
+// ---------------------------------------------------------------------------
+// table
+
+func runTable(ctx context.Context, env *Env, args []string) error {
+	fs := newFlags("table", env)
+	upstream := fs.Bool("upstream", false, "show HEAD -> upstream instead of HEAD -> working tree")
+	asJSON := fs.Bool("json", false, "machine-readable output")
+	if err := parseArgs(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("usage: sqit table <name> [--upstream] [--json]")
+	}
+	w, err := open(env)
+	if err != nil {
+		return err
+	}
+	mode := "working"
+	if *upstream {
+		mode = "upstream"
+	}
+	tv, err := w.Table(ctx, fs.Arg(0), mode)
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		return writeJSON(env.Stdout, tv)
+	}
+	// Plain text: one line per row, changed cells as old -> new.
+	fmt.Fprintf(env.Stdout, "%s (%s): %d rows, +%d ~%d -%d\n", tv.Table, tv.Mode, tv.Counts.Total, tv.Counts.Added, tv.Counts.Modified, tv.Counts.Deleted)
+	for _, r := range tv.Rows {
+		mark := " "
+		switch r.Status {
+		case "added":
+			mark = "+"
+		case "deleted":
+			mark = "-"
+		case "modified":
+			mark = "~"
+		}
+		fmt.Fprintf(env.Stdout, "%s %s:", mark, r.ID)
+		for _, col := range tv.Columns {
+			c := r.Cells[col]
+			if c.Changed {
+				fmt.Fprintf(env.Stdout, " %s=%s->%s", col, c.Old, c.Value)
+			} else {
+				fmt.Fprintf(env.Stdout, " %s=%s", col, c.Value)
+			}
+		}
+		fmt.Fprintln(env.Stdout)
+	}
+	return nil
 }

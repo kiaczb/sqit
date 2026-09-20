@@ -72,6 +72,9 @@ func Open(dir string) (*Repository, error) {
 			if err != nil {
 				return nil, err
 			}
+			if err := LoadEnvFile(filepath.Join(cur, EnvFileName)); err != nil {
+				return nil, err
+			}
 			return &Repository{Root: cur, Dir: candidate, Config: cfg}, nil
 		}
 		parent := filepath.Dir(cur)

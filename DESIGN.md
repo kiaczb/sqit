@@ -73,6 +73,9 @@ operations. Where it deviates from the original brief it says why.
   database names only; the password comes from an environment variable named
   in the config (default `SQIT_LOCAL_PASSWORD` / `SQIT_TEST_PASSWORD`), or an
   entire DSN can be supplied through `SQIT_LOCAL_DSN` / `SQIT_TEST_DSN`.
+* `sqit init` also writes `sqit.env` next to `.sqit/` (and lists it in
+  `.gitignore`): a KEY=VALUE file for the passwords / DSNs that every command
+  loads before reading the config; real environment variables win over it.
 * `"localOnly": true` (or `SQIT_LOCAL_ONLY=1`) makes every TEST/upstream
   connection attempt fail unless the DSN targets localhost. It is a guard for
   local development against the Docker MySQL in `docker-compose.yml`; it

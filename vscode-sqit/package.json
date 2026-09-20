@@ -1,0 +1,83 @@
+{
+  "name": "sqit",
+  "displayName": "SQit – MySQL data version control",
+  "description": "Table view with GitHub-style red/green changes for sqit repositories (Git-like versioning of MySQL data).",
+  "version": "0.1.0",
+  "publisher": "sqit",
+  "license": "MIT",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": ["workspaceContains:**/.sqit/config.json"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "sqit", "title": "SQit", "icon": "media/sqit.svg" }
+      ]
+    },
+    "views": {
+      "sqit": [
+        { "id": "sqit.tables", "name": "Tables", "contextualTitle": "SQit" },
+        { "id": "sqit.upstream", "name": "Upstream (TEST)", "contextualTitle": "SQit" }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "sqit.tables",
+        "contents": "No sqit repository found in this workspace.\nRun `sqit init --tables ...` in a terminal, then [Refresh](command:sqit.refresh)."
+      }
+    ],
+    "commands": [
+      { "command": "sqit.refresh", "title": "SQit: Refresh", "icon": "$(refresh)" },
+      { "command": "sqit.openTable", "title": "SQit: Open Table", "icon": "$(table)" },
+      { "command": "sqit.commit", "title": "SQit: Commit LOCAL state", "icon": "$(check)" },
+      { "command": "sqit.fetch", "title": "SQit: Fetch upstream (TEST)", "icon": "$(cloud-download)" },
+      { "command": "sqit.pullDryRun", "title": "SQit: Pull (dry run)", "icon": "$(eye)" },
+      { "command": "sqit.pull", "title": "SQit: Pull upstream into LOCAL", "icon": "$(repo-pull)" },
+      { "command": "sqit.status", "title": "SQit: Status", "icon": "$(info)" },
+      { "command": "sqit.diff", "title": "SQit: Diff (text)", "icon": "$(diff)" },
+      { "command": "sqit.log", "title": "SQit: Log" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "sqit.refresh", "when": "view == sqit.tables || view == sqit.upstream", "group": "navigation@1" },
+        { "command": "sqit.commit", "when": "view == sqit.tables", "group": "navigation@2" },
+        { "command": "sqit.pullDryRun", "when": "view == sqit.upstream", "group": "navigation@2" },
+        { "command": "sqit.pull", "when": "view == sqit.upstream", "group": "navigation@3" },
+        { "command": "sqit.fetch", "when": "view == sqit.upstream", "group": "navigation@4" },
+        { "command": "sqit.diff", "when": "view == sqit.tables", "group": "1_more" },
+        { "command": "sqit.status", "when": "view == sqit.tables", "group": "1_more" },
+        { "command": "sqit.log", "when": "view == sqit.tables", "group": "1_more" }
+      ],
+      "view/item/context": [
+        { "command": "sqit.openTable", "when": "view == sqit.tables && viewItem == table", "group": "inline" }
+      ]
+    },
+    "configuration": {
+      "title": "SQit",
+      "properties": {
+        "sqit.executable": {
+          "type": "string",
+          "default": "sqit",
+          "description": "Path to the sqit executable (default: 'sqit' on PATH, e.g. C:/Users/you/go/bin/sqit.exe)."
+        },
+        "sqit.refreshOnFocus": {
+          "type": "boolean",
+          "default": true,
+          "description": "Re-read the LOCAL database when the VS Code window regains focus."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.0",
+    "typescript": "^5.4.0"
+  }
+}

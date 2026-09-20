@@ -111,6 +111,7 @@ func runInit(ctx context.Context, env *Env, args []string) error {
 	fs.IntVar(&cfg.Test.Port, "test-port", cfg.Test.Port, "TEST MySQL port")
 	fs.StringVar(&cfg.Test.User, "test-user", cfg.Test.User, "TEST MySQL user")
 	fs.StringVar(&cfg.Test.Database, "test-db", cfg.Test.Database, "TEST database name")
+	fs.BoolVar(&cfg.LocalOnly, "local-only", false, "refuse TEST/upstream connections that do not target localhost")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -124,7 +125,14 @@ func runInit(ctx context.Context, env *Env, args []string) error {
 		return err
 	}
 	fmt.Fprintf(env.Stdout, "Initialized empty sqit repository in %s\n", r.Dir)
-	if len(cfg.Tables) == 0 || cfg.Local.Database == "" || cfg.Test.Database == "" {
+	fmt.Fprintf(env.Stdout, "LOCAL:    %s\n", cfg.Local.Describe())
+	fmt.Fprintf(env.Stdout, "UPSTREAM: %s\n", cfg.Test.Describe())
+	if cfg.IsLocalOnly() {
+		fmt.Fprintln(env.Stdout, "Local-only mode: upstream connections are restricted to localhost.")
+	}
+	localSet := cfg.Local.Database != "" || os.Getenv(cfg.Local.DSNEnv) != ""
+	testSet := cfg.Test.Database != "" || os.Getenv(cfg.Test.DSNEnv) != ""
+	if len(cfg.Tables) == 0 || !localSet || !testSet {
 		fmt.Fprintf(env.Stdout, "Edit %s to set the databases and the tables to track.\n", r.Dir+string(os.PathSeparator)+"config.json")
 	}
 	return nil

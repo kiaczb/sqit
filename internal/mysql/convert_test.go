@@ -107,3 +107,28 @@ func TestQuote(t *testing.T) {
 		t.Fatal(Quote("a`b"))
 	}
 }
+
+func TestAssertLoopback(t *testing.T) {
+	ok := []string{
+		"u:p@tcp(127.0.0.1:3306)/db",
+		"u:p@tcp(localhost:3307)/db",
+		"u:p@tcp([::1]:3306)/db",
+		"u:p@unix(/var/run/mysqld.sock)/db",
+		"u:p@/db", // driver default: tcp 127.0.0.1:3306
+	}
+	for _, dsn := range ok {
+		if err := AssertLoopback(dsn); err != nil {
+			t.Errorf("%s: unexpected %v", dsn, err)
+		}
+	}
+	bad := []string{
+		"u:p@tcp(test-db.corp.example:3306)/db",
+		"u:p@tcp(10.0.0.5:3306)/db",
+		"u:p@tcp(mysql:3306)/db",
+	}
+	for _, dsn := range bad {
+		if err := AssertLoopback(dsn); err == nil {
+			t.Errorf("%s: expected refusal", dsn)
+		}
+	}
+}

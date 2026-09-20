@@ -27,6 +27,27 @@ type Config struct {
 	Local   Connection `json:"local"`
 	Test    Connection `json:"test"`
 	Tables  []string   `json:"tables"`
+	// LocalOnly refuses any TEST/upstream connection that does not target
+	// localhost. Meant for local development against a Docker MySQL so a
+	// stray DSN can never reach the real TEST database. The environment
+	// variable SQIT_LOCAL_ONLY=1 has the same effect.
+	LocalOnly bool `json:"localOnly,omitempty"`
+}
+
+// LocalOnlyEnv is the environment variable that enables local-only mode.
+const LocalOnlyEnv = "SQIT_LOCAL_ONLY"
+
+// IsLocalOnly reports whether upstream connections are restricted to
+// localhost, by config or by environment.
+func (c *Config) IsLocalOnly() bool {
+	if c.LocalOnly {
+		return true
+	}
+	switch strings.ToLower(os.Getenv(LocalOnlyEnv)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // DefaultConfig returns a config template.

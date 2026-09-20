@@ -4,9 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
 	"strings"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 
 	"sqit/internal/object"
 	"sqit/internal/schema"
@@ -17,6 +18,33 @@ import (
 type Querier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// AssertLoopback returns an error unless the DSN targets the local machine
+// (a loopback address, "localhost", or a unix socket). It never connects.
+func AssertLoopback(dsn string) error {
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return fmt.Errorf("invalid DSN: %w", err)
+	}
+	switch cfg.Net {
+	case "unix":
+		return nil
+	case "", "tcp":
+		host := cfg.Addr
+		if h, _, err := net.SplitHostPort(cfg.Addr); err == nil {
+			host = h
+		}
+		if strings.EqualFold(host, "localhost") {
+			return nil
+		}
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			return nil
+		}
+		return fmt.Errorf("upstream host %q is not localhost (local-only mode)", host)
+	default:
+		return fmt.Errorf("upstream network %q is not allowed in local-only mode", cfg.Net)
+	}
 }
 
 // Session is a single dedicated connection with sqit's session settings

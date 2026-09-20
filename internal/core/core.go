@@ -84,6 +84,11 @@ func (w *Workspace) ReadTest(ctx context.Context) (*snapshot.Memory, error) {
 	if err != nil {
 		return nil, fmt.Errorf("test: %w", err)
 	}
+	if w.Repo.Config.IsLocalOnly() {
+		if err := mysql.AssertLoopback(dsn); err != nil {
+			return nil, fmt.Errorf("test (%s): refused: %w", w.Repo.Config.Test.Describe(), err)
+		}
+	}
 	sess, err := mysql.Connect(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("test (%s): %w", w.Repo.Config.Test.Describe(), err)

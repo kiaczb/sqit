@@ -73,6 +73,10 @@ operations. Where it deviates from the original brief it says why.
   database names only; the password comes from an environment variable named
   in the config (default `SQIT_LOCAL_PASSWORD` / `SQIT_TEST_PASSWORD`), or an
   entire DSN can be supplied through `SQIT_LOCAL_DSN` / `SQIT_TEST_DSN`.
+* `"localOnly": true` (or `SQIT_LOCAL_ONLY=1`) makes every TEST/upstream
+  connection attempt fail unless the DSN targets localhost. It is a guard for
+  local development against the Docker MySQL in `docker-compose.yml`; it
+  changes nothing about the upstream model.
 * The whole directory is intended to be committed into an ordinary Git
   repository next to the application code. `sqit` keeps its own history
   inside the objects; Git merely versions the files.

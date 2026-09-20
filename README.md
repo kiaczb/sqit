@@ -59,7 +59,7 @@ everything in it is deterministic JSON.
 
 | command | meaning |
 |---|---|
-| `sqit init` | create `.sqit/` |
+| `sqit init [--local-only]` | create `.sqit/`; `--local-only` restricts upstream connections to localhost |
 | `sqit status [--fetch] [--json]` | working-tree changes vs HEAD, upstream changes vs HEAD, relation (`CLEAN`, `LOCAL MODIFIED`, `UPSTREAM AHEAD`, `LOCAL AHEAD`, `DIVERGED`, `UNRELATED`, `NO UPSTREAM`) |
 | `sqit diff [--json]` | WORKING TREE vs HEAD, field level |
 | `sqit diff --upstream [--fetch]` | UPSTREAM vs HEAD |
@@ -90,6 +90,149 @@ not contact TEST unless `--fetch` is given. `pull` always fetches.
 * Incompatible schemas (different columns, base types, nullability or primary
   key) abort the pull; `sqit` never runs `ALTER TABLE`.
 
+## Local development / testing
+
+You do not need the real TEST database to try `sqit`: `docker-compose.yml`
+starts one MySQL 8 server with two databases that play the two roles.
+
+| role | database | user | privileges |
+|---|---|---|---|
+| LOCAL (working tree) | `sqit_local` | `sqit_local_user` | SELECT, INSERT, UPDATE, DELETE |
+| TEST / UPSTREAM | `sqit_upstream` | `sqit_upstream_user` | **SELECT only** |
+
+The upstream user deliberately has no write privilege, so the local setup
+also proves that `sqit` never modifies the upstream. Both databases are
+seeded from `testdata/` with the same small, readable data set (`users`,
+`orders`; composite key, nullable columns, DECIMAL):
+
+```text
+users:  1 Anna | 2 John | 3 Maria (email NULL, inactive) | 42 Peter old@example.com
+orders: (1,1) 10.00 'first order' | (1,2) 25.50 | (42,1) 99.99 'gift'
+```
+
+Nothing about the upstream concept changes: later you only point
+`SQIT_TEST_DSN` (or `.sqit/config.json`'s `test` block) at the real TEST
+database instead of the Docker one.
+
+> Already have a MySQL server (e.g. a Docker container) you want to reuse
+> instead of the compose one? `scripts/setup-existing-mysql.ps1 -Container
+> <name> -RootPassword <pw>` seeds the same two databases into it (MySQL
+> 5.5+ compatible, users `sqit_local` / `sqit_upstream`). A complete
+> step-by-step walkthrough in Hungarian is in
+> [docs/LOKALIS_TESZT.md](docs/LOKALIS_TESZT.md).
+
+### 1. Start the local MySQL
+
+```bash
+cp .env.example .env        # adjust SQIT_MYSQL_PORT if 3306 is taken
+docker compose up -d
+```
+
+`testdata/*.sql` run on the first start. Reset everything to the seed state
+with:
+
+```bash
+docker compose down -v && docker compose up -d
+```
+
+(`.env` is git-ignored; it only holds the throwaway Docker credentials.)
+
+### 2. Configure LOCAL and UPSTREAM
+
+Load the variables from `.env` – bash:
+
+```bash
+set -a; source .env; set +a
+```
+
+PowerShell:
+
+```powershell
+Get-Content .env | Where-Object { $_ -match '^[A-Z_]+=' } | ForEach-Object { $k,$v = $_ -split '=',2; Set-Item "env:$k" $v.Trim("'") }
+```
+
+`SQIT_LOCAL_DSN` configures LOCAL, `SQIT_TEST_DSN` configures UPSTREAM
+(both override whatever host/port/user/database is in `config.json`).
+
+**Local-only mode.** `sqit init --local-only` writes `"localOnly": true`
+into `.sqit/config.json` (the environment variable `SQIT_LOCAL_ONLY=1` has
+the same effect). In this mode every upstream connection attempt is checked
+*before* connecting and refused unless it targets `localhost`, a loopback IP
+or a unix socket – a stray DSN can never reach the real TEST database while
+you test. Remove the flag when you switch to the real TEST.
+
+### 3. Run the workflow
+
+```bash
+go build -o sqit ./cmd/sqit
+mkdir demo && cd demo
+../sqit init --tables users,orders --local-only
+../sqit commit -m "Initial state"
+```
+
+Make a local change and look at it:
+
+```bash
+docker exec sqit-mysql mysql -uroot -psqit-root -e "UPDATE sqit_local.users SET name='Peter Smith' WHERE id=42"
+../sqit status
+../sqit diff            # users/42: name Peter -> Peter Smith
+```
+
+Change the upstream (only ever through the root account or a client of your
+own – `sqit` cannot), fetch and compare:
+
+```bash
+docker exec sqit-mysql mysql -uroot -psqit-root -e "UPDATE sqit_upstream.users SET email='new@example.com' WHERE id=42"
+../sqit fetch
+../sqit diff --upstream # users/42: email old@example.com -> new@example.com
+```
+
+Merge (non-conflicting: `name` from LOCAL, `email` from UPSTREAM):
+
+```bash
+../sqit pull --dry-run
+../sqit pull
+docker exec sqit-mysql mysql -uroot -psqit-root -e "SELECT * FROM sqit_local.users WHERE id=42"
+# 42 | Peter Smith | new@example.com | 1
+```
+
+Conflict (both sides change `name`): `pull --dry-run` lists it with BASE /
+LOCAL / UPSTREAM values, `pull` exits 1 and leaves `sqit_local`, HEAD and the
+refs untouched – even if other, clean upstream changes were pending:
+
+```bash
+docker exec sqit-mysql mysql -uroot -psqit-root -e "UPDATE sqit_upstream.users SET name='Péter' WHERE id=42"
+../sqit pull --dry-run
+../sqit pull; echo "exit=$?"
+```
+
+Resolve by setting the value you want in `sqit_local`, `commit`, then `pull`
+again. Inserts and deletes work the same way; a row modified locally and
+deleted upstream (or vice versa) is a conflict, a row left untouched locally
+and deleted upstream is simply deleted by `pull`.
+
+### 4. Run the integration tests
+
+With `.env` loaded (see step 2), the whole suite runs against the Docker
+MySQL:
+
+```bash
+go test ./...
+```
+
+* `SQIT_IT_DSN` (root) drives the general integration tests in
+  `internal/core/integration_test.go`; they create and drop throwaway
+  `sqit_it_*` databases and check results directly with SQL.
+* `SQIT_IT_DSN` + `SQIT_LOCAL_DSN` + `SQIT_TEST_DSN` together enable
+  `TestLocalEnvironmentWorkflow` (`internal/core/localenv_test.go`), which
+  reseeds `sqit_local` / `sqit_upstream` from `testdata/` and replays the
+  exact workflow above through the CLI: it asserts that the upstream user
+  cannot write, that local-only mode refuses a non-localhost DSN, and that
+  after each `pull` the `sqit_local` tables contain the merge result.
+
+Without these variables the integration tests are skipped and only the unit
+tests run.
+
 ## Tests
 
 Unit tests need nothing:
@@ -99,11 +242,11 @@ go test ./...
 ```
 
 Integration tests run against a real MySQL server when `SQIT_IT_DSN` points
-at an account that may create databases (they create and drop `sqit_it_*`):
+at an account that may create databases (they create and drop `sqit_it_*`).
+The easiest is the Docker environment above; any other server works too:
 
 ```bash
-docker run -d --name sqit-mysql-test -e MYSQL_ROOT_PASSWORD=sqit -p 3307:3306 mysql:8.0
-SQIT_IT_DSN='root:sqit@tcp(127.0.0.1:3307)/' go test ./...
+SQIT_IT_DSN='root:secret@tcp(127.0.0.1:3306)/' go test ./...
 ```
 
 ## Layout
